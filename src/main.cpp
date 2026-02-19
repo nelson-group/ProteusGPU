@@ -1,6 +1,7 @@
 #include <iostream>
 #include <stdio.h>
 #include <vector>
+#include <cmath>
 #include "global/allvars.h"
 #include "io/input.h"
 #include "io/output.h"
@@ -30,6 +31,7 @@ int main(int argc, char* argv[]) {
     // -------- actual code starts here --------
     _K_ = input.getParameterInt("knn_k");
     _boxsize_ = input.getParameterDouble("box_size");
+    _KNN_BLOCK_SIZE_ = input.getParameterInt("knn_block_size");
 
     // define knn problem
     knn_problem *knn = NULL;
@@ -37,17 +39,25 @@ int main(int argc, char* argv[]) {
     // prepare knn problem
     knn = knn::init((double3*) pts.data(), icData.seedpos_dims[0]);
 
-    // copy d_stored_points back to cpu
-    gpuMemcpy(pts.data(), knn->d_stored_points, knn->len_pts * sizeof(double3));
+
+    // solve knn problem
+    knn::solve(knn);
+
+    double3* knn_pts = knn::get_points(knn);
+    unsigned int* knn_nearest = knn::get_knearest(knn);
+    unsigned int* knn_permutation = knn::get_permutation(knn);
 
     // -------- testing area --------
-    std::cout << knn->d_stored_points[0].x << ", " << knn->d_stored_points[0].y << ", " << knn->d_stored_points[0].z << std::endl;
+    // write KNN data to HDF5 file
+#if defined(USE_HDF5) && defined(WRITE_KNN_OUTPUT)
+    std::string knn_output_file = input.getParameter("output_knn_file");
+    if (!output.writeKNNFile(knn_output_file, knn_pts, knn_nearest, knn_permutation, icData.seedpos_dims[0], _K_)) {return EXIT_FAILURE;}
+#endif
 
-    std::cout << knn->d_stored_points[12999].x << ", " << knn->d_stored_points[12999].y << ", " << knn->d_stored_points[12999].z << std::endl;
-
-
-    // ----------------
-
+    // free KNN resources
+    free(knn_pts);
+    free(knn_nearest);
+    free(knn_permutation);
     knn::knn_free(&knn);
 
     // write mesh file

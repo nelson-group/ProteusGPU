@@ -16,6 +16,9 @@ USE_HDF5
 # Debug
 #DEBUG_MODE
 
+# Output types
+#WRITE_KNN_OUTPUT
+
 # Dry-run mode for CI/CD (exits after printing welcome banner)
 # NOTE: turning this off requires a correct IC.hdf5 file...
 DRY_RUN

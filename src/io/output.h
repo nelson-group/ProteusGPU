@@ -39,6 +39,16 @@ struct MeshCellData {
     std::vector<double> volumes;
     MeshFaceData faces;
 };
+
+struct KNNData {
+    int num_points;
+    int k;
+    std::vector<double> points;              // num_points x 3 (x,y,z)
+    std::vector<hsize_t> points_dims;        // [num_points, 3]
+    std::vector<unsigned int> nearest;       // num_points x k
+    std::vector<hsize_t> nearest_dims;       // [num_points, k]
+    std::vector<unsigned int> permutation;   // num_points
+};
 #endif
 
 // output handler class for writing mesh files
@@ -55,6 +65,9 @@ public:
 #ifdef USE_HDF5
     // write mesh data to HDF5 file
     bool writeMeshFile(const std::string& filename, const MeshCellData& meshData);
+    
+    // write KNN data to HDF5 file
+    bool writeKNNFile(const std::string& filename, double3* knn_pts, unsigned int* knn_nearest, unsigned int* knn_permutation, int num_points, int k);
 #endif
 };
 

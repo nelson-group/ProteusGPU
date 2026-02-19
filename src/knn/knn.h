@@ -30,8 +30,8 @@ typedef struct {
 
 namespace knn {
 
+// prepare the knn problem
 knn_problem* init(double3 *pts, int len_pts);
-
 void sort_points_into_grid(knn_problem* knn, double3* d_points, int len_pts);
 #ifdef CPU_DEBUG
 void cpu_count(int blocksPerGrid, int threadsPerBlock, double3* d_points, int len_pts, int N_grid, int* d_counters);
@@ -40,11 +40,19 @@ void cpu_store(int blocksPerGrid, int threadsPerBlock, const double3* d_points, 
 #endif
 int cellFromPoint(int N_grid, double3 point);
 
-//void solve();
+// solve the knn problem
+void solve(knn_problem* knn);
+#ifdef CPU_DEBUG
+void cpu_knearest(int blocksPerGrid, int threadsPerBlock, int N_grid, int len_pts, const int* d_ptrs, const int *d_counters, const double3* d_stored_points, int N_cell_offsets, const int* d_cell_offsets, const double* d_cell_offset_dists, unsigned int* d_knearest);
+#endif
+void heapify(unsigned int *keys, double *vals, int node, int size);
+template <typename T> void inline swap_on_device(T& a, T& b);
+void heapsort(unsigned int *keys, double *vals, int size);
+
 void knn_free(knn_problem** knn);
-//double3 get_points();
-//unsigned int* get_knearests();
-//unsigned int* get_permutation();
+double3* get_points(knn_problem* knn);
+unsigned int* get_knearest(knn_problem* knn);
+unsigned int* get_permutation(knn_problem* knn);
 
 // mystic function
 void printInfo();

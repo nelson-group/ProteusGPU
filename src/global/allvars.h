@@ -21,6 +21,7 @@ typedef struct{
 #pragma once
 extern int _K_;
 extern double _boxsize_;
+extern int _KNN_BLOCK_SIZE_;
 
 // abstraction layer to later switch between CPU_DEBUG, CUDA and HIP defines
 // for now just CPU stuff
@@ -41,6 +42,7 @@ inline void gpuMemcpy(void *dst, const void *src, size_t size) {
 #ifdef CPU_DEBUG    
     memcpy(dst, src, size);
 #endif
+    // for cuda memcpy needs to be split into cudaMemcpyHostToDevice and cudaMemcpyDeviceToHost, but for now we just do memcpy
 }
 
 inline void gpuMallocNMemset(void **ptr, int value, size_t size) {

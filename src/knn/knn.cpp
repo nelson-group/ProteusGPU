@@ -4,11 +4,14 @@
 #include <cstdlib>
 #include <cstring>
 #include <cmath>
+#include <climits>
+#include <cfloat>
 
 // CONSTRUCTION SITE: nothing works yet :D
 
 namespace knn {
 
+// -------- initalize KNN problem --------
 knn_problem* init(double3 *pts, int len_pts) {
     
     // -------- allocate the main data structure --------
@@ -188,7 +191,127 @@ int cellFromPoint(int N_grid, double3 point) {
     return i + j * N_grid + k * N_grid * N_grid;
 }
 
+// -------- solve KNN problem --------
+void solve(knn_problem* knn) {
 
+    int threadsPerBlock = _KNN_BLOCK_SIZE_;
+    int blocksPerGrid = (knn->len_pts + threadsPerBlock - 1) / _KNN_BLOCK_SIZE_;
+
+    cpu_knearest(blocksPerGrid, threadsPerBlock, knn->N_grid, knn->len_pts, knn->d_ptrs, knn->d_counters, knn-> d_stored_points, knn->N_cell_offsets, knn->d_cell_offsets, knn->d_cell_offset_dists, knn->d_knearests);
+
+}
+
+#ifdef CPU_DEBUG
+void cpu_knearest(int blocksPerGrid, int threadsPerBlock, int N_grid, int len_pts, const int* d_ptrs, const int *d_counters, const double3* d_stored_points, int N_cell_offsets, const int* d_cell_offsets, const double* d_cell_offset_dists, unsigned int* d_knearest) {
+
+    // __shared__ : each thread updates its k-nearest
+    unsigned int knearest[_K_ * _KNN_BLOCK_SIZE_];
+    double knearest_dists[_K_ * _KNN_BLOCK_SIZE_];
+
+    for (int blockId = 0; blockId < blocksPerGrid; blockId++) {
+        for (int threadId = 0; threadId < threadsPerBlock; threadId++) {
+            int point_in = threadId + blockId * threadsPerBlock;
+            if (point_in >= len_pts) return;
+
+            // point considered by this thread
+            double3 p = d_stored_points[point_in];
+
+            // compute cell_id of point and offset for knn storage
+            int cell_in = cellFromPoint(N_grid, p);
+            int offs = threadId * _K_;
+
+            // set knearest and knearest_dist to maximum values
+            for (int i = 0; i < _K_; i++) {
+                knearest[offs + i] = UINT_MAX;
+                knearest_dists[offs + i] = DBL_MAX;
+            }
+
+            int search_cell_index = 0;
+
+            // expanding ring search: find knn by checking cells in order
+            do {
+                // get the min dist for this cell
+                double min_dist = d_cell_offset_dists[search_cell_index];
+
+                // early termination: all cells are farther: we've found the true knn
+                if (knearest_dists[offs] < min_dist) {break;}
+
+                int cell = cell_in + d_cell_offsets[search_cell_index];
+
+                // enusre the cell is within the grid
+                if (cell >= 0 && cell < N_grid*N_grid*N_grid) {
+                    int cell_base = d_ptrs[cell]; // starting idx for this cell
+                    int num = d_counters[cell]; // how many pts in this cell
+
+                    // iterate over all pts in this cell
+                    for (int ptr = cell_base; ptr < cell_base + num; ptr++) {
+                        
+                        // skip self comparison
+                        if (ptr == point_in) {continue;}
+
+                        // load candidate ngb and calc dist
+                        double3 p_cmp = d_stored_points[ptr];
+                        double d = (p_cmp.x - p.x) * (p_cmp.x - p.x) + (p_cmp.y - p.y) * (p_cmp.y - p.y) + (p_cmp.z - p.z) * (p_cmp.z - p.z);
+
+                        // if new k-nearest neighbour
+                        if (d < knearest_dists[offs]) {
+                            knearest[offs] = ptr;
+                            knearest_dists[offs] = d;
+                            heapify(knearest + offs, knearest_dists + offs, 0, _K_);
+                        }
+                    }
+                }
+            } while (search_cell_index++ < N_cell_offsets);
+
+            // if we exhausted all rings we might not have found all knn
+            // mark with DBL_MAX for diagnostics
+            if (search_cell_index == N_cell_offsets) {
+                std::cerr << "Not sure if we found all ngb here... Thats a problem!" << std::endl;
+            }
+
+            heapsort(knearest + offs, knearest_dists + offs, _K_);
+
+            for (int i = 0; i < _K_; i++) {
+                d_knearest[point_in * _K_ + i] = knearest[offs + i];
+            }
+        }
+    }
+
+}
+#endif
+
+template <typename T> void inline swap_on_device(T& a, T& b) {
+    T c(a); a=b; b=c;
+}
+
+void heapify(unsigned int *keys, double *vals, int node, int size) {
+    int j = node;
+    while (true) { 
+        int left  = 2*j+1;
+        int right = 2*j+2;
+        int largest = j;
+        if ( left<size && vals[ left]>vals[largest]) {
+            largest = left;
+        }
+        if (right<size && vals[right]>vals[largest]) {
+            largest = right;
+        }
+        if (largest==j) return;
+        swap_on_device(vals[j], vals[largest]);
+        swap_on_device(keys[j], keys[largest]);
+        j = largest;
+    }
+}
+
+void heapsort(unsigned int *keys, double *vals, int size) {
+    while (size) {
+        swap_on_device(vals[0], vals[size-1]);
+        swap_on_device(keys[0], keys[size-1]);
+        heapify(keys, vals, 0, --size);
+    }
+}
+
+// -------- other --------
 void knn_free(knn_problem** knn) {
     gpuFree((*knn)->d_cell_offsets);
     gpuFree((*knn)->d_cell_offset_dists);
@@ -203,7 +326,27 @@ void knn_free(knn_problem** knn) {
 }
 
 void printInfo() {
+    // i guess just dont ask haha, just needed a testfunction to print sth once
     std::cout << "Argh—you caught me. Watch me morph into an SPH particle, bye." << std::endl;
+}
+
+// -------- get stuff from gpu to cpu --------
+double3* get_points(knn_problem* knn) {
+    double3* pts = (double3*)malloc(knn->len_pts * sizeof(double3));
+    gpuMemcpy(pts, knn->d_stored_points, knn->len_pts * sizeof(double3));
+    return pts;
+}
+
+unsigned int* get_knearest(knn_problem* knn) {
+    unsigned int* knearest = (unsigned int*)malloc(knn->len_pts * _K_ * sizeof(int));
+    gpuMemcpy(knearest, knn->d_knearests, knn->len_pts * _K_ * sizeof(int));
+    return knearest;
+}
+
+unsigned int* get_permutation(knn_problem* knn) {
+    unsigned int* permutation = (unsigned int*)malloc(knn->len_pts*sizeof(int));
+    gpuMemcpy(permutation, knn->d_permutation, knn->len_pts*sizeof(int));
+    return permutation;
 }
 
 } // namespace knn
