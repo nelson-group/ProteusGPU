@@ -143,15 +143,15 @@ bool InputHandler::readICFile(const std::string& filename, ICData& icData) {
 
     // check that IC file dimension matches compiled code dimension
 #ifdef dim_2D
-    if (icData.header.dimension != 2) {
-    }
+    if (icData.header.dimension != 2)
 #else
-    if (icData.header.dimension != 3) {
+    if (icData.header.dimension != 3)
 #endif
+    {
         std::cerr << "Error: IC file dimension mismatch!" << std::endl;
         std::cerr << "  IC file dimension: " << icData.header.dimension << "D" << std::endl;
         std::cerr << "  Compiled code dimension: " << DIMENSION << "D" << std::endl;
-        std::cerr << "  Please recompile with dim_2D in Config.sh or use a 3D IC file." << std::endl;
+        std::cerr << "  Please recompile with correct dimension in Config.sh or use a different IC file." << std::endl;
         H5Gclose(header_group);
         H5Fclose(file_id);
         return false;

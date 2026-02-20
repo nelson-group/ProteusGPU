@@ -6,19 +6,20 @@
 #include <cmath>
 #include <climits>
 #include <cfloat>
+#include <vector>
 
 // CONSTRUCTION SITE: nothing works yet :D
 
 namespace knn {
 
 // -------- initalize KNN problem --------
-knn_problem* init(double3 *pts, int len_pts) {
+knn_problem* init(POINT_TYPE *pts, int len_pts) {
     
     // -------- allocate the main data structure --------
     knn_problem *knn = (knn_problem*)malloc(sizeof(knn_problem));
 
     knn->len_pts = len_pts;
-    knn->N_grid = std::max(1,(int)round(pow(len_pts / 3.1f, 1.0f / 3.0)));
+    knn->N_grid = std::max(1,(int)round(pow(len_pts / 3.1f, 1.0f / (float)DIMENSION)));
     knn->d_cell_offsets = NULL;
     knn->d_cell_offset_dists = NULL;
     knn->d_permutation = NULL;
@@ -46,6 +47,26 @@ knn_problem* init(double3 *pts, int len_pts) {
 
     // -------- calc offsets for all rings up to N_max --------
     for (int ring = 1; ring < N_max; ring++) {
+#ifdef dim_2D
+        // 2D: only iterate over i and j
+        for (int j = -N_max; j <= N_max; j++) {
+            for (int i = -N_max; i <= N_max; i++) {
+                if (std::max(abs(i), abs(j)) != ring) continue;
+                // everything below is only executed if cell is inside current ring
+
+                // compute linear offset in the flattened 2D grid array
+                int id_offset = i + j * knn->N_grid;
+                cell_offsets[knn->N_cell_offsets] = id_offset;
+
+                // compute geometric distance for pruning later on
+                double d = _boxsize_ * (double)(ring - 1) / (double)(knn->N_grid);
+                cell_offset_dists[knn->N_cell_offsets] = d*d;
+
+                knn->N_cell_offsets++;
+            }
+        }
+#else
+        // 3D: iterate over i, j, and k
         for (int k = -N_max; k <= N_max; k++) {
             for (int j = -N_max; j <= N_max; j++) {
                 for (int i = -N_max; i <= N_max; i++) {
@@ -64,6 +85,7 @@ knn_problem* init(double3 *pts, int len_pts) {
                 }
             }
         }
+#endif
     }
 
     // -------- allocate memory buffers and copy data --------
@@ -73,12 +95,15 @@ knn_problem* init(double3 *pts, int len_pts) {
     gpuMallocNCopy((void**)&knn->d_cell_offset_dists, cell_offset_dists, knn->N_cell_offsets*sizeof(double));
     free(cell_offset_dists);
 
-    double3 *d_points = NULL;
-    gpuMallocNCopy((void**)&d_points, pts, len_pts*sizeof(double3)); // input pts to GPU (temporary), freed after sorting into grid
-    gpuMallocNMemset((void**)&knn->d_counters, 0x00, knn->N_grid*knn->N_grid*knn->N_grid*sizeof(int)); // pts per grid cell
-    gpuMallocNMemset((void**)&knn->d_ptrs, 0x00, knn->N_grid*knn->N_grid*knn->N_grid*sizeof(int)); // cell ptrs to start in d_stored_points
+    POINT_TYPE *d_points = NULL;
+    gpuMallocNCopy((void**)&d_points, pts, len_pts*sizeof(POINT_TYPE)); // input pts to GPU (temporary), freed after sorting into grid
+
+    int Npow = pow(knn->N_grid, DIMENSION);
+    gpuMallocNMemset((void**)&knn->d_counters, 0x00, Npow*sizeof(int)); // pts per grid cell
+    gpuMallocNMemset((void**)&knn->d_ptrs, 0x00, Npow*sizeof(int)); // cell ptrs to start in d_stored_points
+
     gpuMallocNMemset((void**)&knn->d_globcounter, 0x00, sizeof(int)); // global counter
-    gpuMallocNMemset((void**)&knn->d_stored_points, 0x00, knn->len_pts*sizeof(double3)); // will be filled with sorted points
+    gpuMallocNMemset((void**)&knn->d_stored_points, 0x00, knn->len_pts*sizeof(POINT_TYPE)); // will be filled with sorted points
     gpuMallocNMemset((void**)&knn->d_permutation, 0x00, knn->len_pts*sizeof(unsigned int)); // permutation to restore original order
     gpuMallocNMemset((void**)&knn->d_knearests, 0xFF, knn->len_pts*_K_*sizeof(int)); // result indices of knn
 
@@ -91,7 +116,7 @@ knn_problem* init(double3 *pts, int len_pts) {
     return knn;
 }
 
-void sort_points_into_grid(knn_problem* knn, double3* d_points, int len_pts) {
+void sort_points_into_grid(knn_problem* knn, POINT_TYPE* d_points, int len_pts) {
 
     // -------- count points per grid cell --------
     {
@@ -106,7 +131,7 @@ void sort_points_into_grid(knn_problem* knn, double3* d_points, int len_pts) {
     // -------- reserve memory ranges for each cell --------
     {
         int threadsPerBlock = 4;
-        int blocksPerGrid = (knn->N_grid*knn->N_grid*knn->N_grid + threadsPerBlock - 1) / threadsPerBlock;
+        int blocksPerGrid = (pow(knn->N_grid, DIMENSION) + threadsPerBlock - 1) / threadsPerBlock;
 
         #ifdef CPU_DEBUG
         cpu_reserve(blocksPerGrid, threadsPerBlock, knn->N_grid, knn->d_counters, knn->d_globcounter, knn->d_ptrs);
@@ -116,7 +141,7 @@ void sort_points_into_grid(knn_problem* knn, double3* d_points, int len_pts) {
     // -------- store points in their cell-organized locations -------
     {
         // reset counters: we'll reuse them for atomic allocation within each cell's range
-        gpuMemset(knn->d_counters, 0x00, knn->N_grid*knn->N_grid*knn->N_grid*sizeof(int));
+        gpuMemset(knn->d_counters, 0x00, pow(knn->N_grid, DIMENSION)*sizeof(int));
 
         int threadsPerBlock = 256;
         int blocksPerGrid = (len_pts + threadsPerBlock - 1) / threadsPerBlock;
@@ -130,7 +155,7 @@ void sort_points_into_grid(knn_problem* knn, double3* d_points, int len_pts) {
 
 #ifdef CPU_DEBUG
 // counts how many poiunts are in each cell, stores in d_counters
-void cpu_count(int blocksPerGrid, int threadsPerBlock, double3* d_points, int len_pts, int N_grid, int* d_counters) {
+void cpu_count(int blocksPerGrid, int threadsPerBlock, POINT_TYPE* d_points, int len_pts, int N_grid, int* d_counters) {
     for (int blockId = 0; blockId < blocksPerGrid; blockId++) {
         for (int threadId = 0; threadId < threadsPerBlock; threadId++) {
             int id = threadsPerBlock * blockId + threadId;
@@ -147,7 +172,8 @@ void cpu_reserve(int blocksPerGrid, int threadsPerBlock, int N_grid, const int* 
     for (int blockId = 0; blockId < blocksPerGrid; blockId++) {
         for (int threadId = 0; threadId < threadsPerBlock; threadId++) {
             int id = threadsPerBlock * blockId + threadId;
-            if (id < N_grid*N_grid*N_grid) {
+
+            if (id < pow(N_grid, DIMENSION)) {
                 int count = d_counters[id]; // read how many points are in this cell
                 if (count > 0) {
                     d_ptrs[id] = atomicAdd(d_globcounter, count); // store starting pos in ptrs
@@ -158,13 +184,13 @@ void cpu_reserve(int blocksPerGrid, int threadsPerBlock, int N_grid, const int* 
 }
 
 // stores points in their cell-organized locations
-void cpu_store(int blocksPerGrid, int threadsPerBlock, const double3* d_points, int len_pts, int N_grid, const int *d_ptrs, int* d_counters, double3* d_stored_points, unsigned int *d_permutation) {
+void cpu_store(int blocksPerGrid, int threadsPerBlock, const POINT_TYPE* d_points, int len_pts, int N_grid, const int *d_ptrs, int* d_counters, POINT_TYPE* d_stored_points, unsigned int *d_permutation) {
     for (int blockId = 0; blockId < blocksPerGrid; blockId++) {
         for (int threadId = 0; threadId < threadsPerBlock; threadId++) {
             int id = threadsPerBlock * blockId + threadId;
             if (id < len_pts) {
                 // determine cell for point
-                double3 p = d_points[id];
+                POINT_TYPE p = d_points[id];
                 int cell = cellFromPoint(N_grid, p);
 
                 // claim a slot within the cell's range
@@ -179,16 +205,20 @@ void cpu_store(int blocksPerGrid, int threadsPerBlock, const double3* d_points, 
 #endif
 
 // get cell index from point position (will be __device__)
-int cellFromPoint(int N_grid, double3 point) {
+int cellFromPoint(int N_grid, POINT_TYPE point) {
     int i = (int)floor(point.x * (double) N_grid / _boxsize_);
     int j = (int)floor(point.y * (double) N_grid / _boxsize_);
-    int k = (int)floor(point.z * (double) N_grid / _boxsize_);
 
     i = std::max(0, std::min(i, N_grid-1));
     j = std::max(0, std::min(j, N_grid-1));
-    k = std::max(0, std::min(k, N_grid-1));
 
+#ifdef dim_2D
+    return i + j * N_grid;
+#else
+    int k = (int)floor(point.z * (double) N_grid / _boxsize_);
+    k = std::max(0, std::min(k, N_grid-1));
     return i + j * N_grid + k * N_grid * N_grid;
+#endif
 }
 
 // -------- solve KNN problem --------
@@ -202,11 +232,11 @@ void solve(knn_problem* knn) {
 }
 
 #ifdef CPU_DEBUG
-void cpu_knearest(int blocksPerGrid, int threadsPerBlock, int N_grid, int len_pts, const int* d_ptrs, const int *d_counters, const double3* d_stored_points, int N_cell_offsets, const int* d_cell_offsets, const double* d_cell_offset_dists, unsigned int* d_knearest) {
+void cpu_knearest(int blocksPerGrid, int threadsPerBlock, int N_grid, int len_pts, const int* d_ptrs, const int *d_counters, const POINT_TYPE* d_stored_points, int N_cell_offsets, const int* d_cell_offsets, const double* d_cell_offset_dists, unsigned int* d_knearest) {
 
     // __shared__ : each thread updates its k-nearest
-    unsigned int knearest[_K_ * _KNN_BLOCK_SIZE_];
-    double knearest_dists[_K_ * _KNN_BLOCK_SIZE_];
+    unsigned int* knearest = (unsigned int*)malloc(_K_ * _KNN_BLOCK_SIZE_ * sizeof(unsigned int));
+    double* knearest_dists = (double*)malloc(_K_ * _KNN_BLOCK_SIZE_ * sizeof(double));
 
     for (int blockId = 0; blockId < blocksPerGrid; blockId++) {
         for (int threadId = 0; threadId < threadsPerBlock; threadId++) {
@@ -214,7 +244,7 @@ void cpu_knearest(int blocksPerGrid, int threadsPerBlock, int N_grid, int len_pt
             if (point_in >= len_pts) return;
 
             // point considered by this thread
-            double3 p = d_stored_points[point_in];
+            POINT_TYPE p = d_stored_points[point_in];
 
             // compute cell_id of point and offset for knn storage
             int cell_in = cellFromPoint(N_grid, p);
@@ -239,7 +269,7 @@ void cpu_knearest(int blocksPerGrid, int threadsPerBlock, int N_grid, int len_pt
                 int cell = cell_in + d_cell_offsets[search_cell_index];
 
                 // enusre the cell is within the grid
-                if (cell >= 0 && cell < N_grid*N_grid*N_grid) {
+                if (cell >= 0 && cell < pow(N_grid, DIMENSION)) {
                     int cell_base = d_ptrs[cell]; // starting idx for this cell
                     int num = d_counters[cell]; // how many pts in this cell
 
@@ -250,8 +280,9 @@ void cpu_knearest(int blocksPerGrid, int threadsPerBlock, int N_grid, int len_pt
                         if (ptr == point_in) {continue;}
 
                         // load candidate ngb and calc dist
-                        double3 p_cmp = d_stored_points[ptr];
-                        double d = (p_cmp.x - p.x) * (p_cmp.x - p.x) + (p_cmp.y - p.y) * (p_cmp.y - p.y) + (p_cmp.z - p.z) * (p_cmp.z - p.z);
+                        POINT_TYPE p_cmp = d_stored_points[ptr];
+                        double d = dist2_point(p, p_cmp);
+
 
                         // if new k-nearest neighbour
                         if (d < knearest_dists[offs]) {
@@ -277,6 +308,8 @@ void cpu_knearest(int blocksPerGrid, int threadsPerBlock, int N_grid, int len_pt
         }
     }
 
+    free(knearest);
+    free(knearest_dists);
 }
 #endif
 
@@ -311,6 +344,81 @@ void heapsort(unsigned int *keys, double *vals, int size) {
     }
 }
 
+
+bool verify(knn_problem* knn, double tol, int max_report) {
+    if (!knn) {
+        std::cerr << "KNN verify: null knn problem." << std::endl;
+        return false;
+    }
+
+    int n = knn->len_pts;
+    int k = _K_;
+    const POINT_TYPE* pts = knn->d_stored_points;
+    const unsigned int* knn_idx = knn->d_knearests;
+
+    if (!pts || !knn_idx) {
+        std::cerr << "KNN verify: missing data buffers." << std::endl;
+        return false;
+    }
+
+    int mismatches = 0;
+    for (int i = 0; i < n; i++) {
+        std::vector<double> best_dist(k, DBL_MAX);
+        std::vector<unsigned int> best_idx(k, UINT_MAX);
+
+        const POINT_TYPE& p = pts[i];
+
+        for (int j = 0; j < n; j++) {
+            if (j == i) continue;
+            double d = dist2_point(p, pts[j]);
+
+            if (d >= best_dist[k-1]) continue;
+
+            int pos = k - 1;
+            while (pos > 0 && d < best_dist[pos-1]) {
+                best_dist[pos] = best_dist[pos-1];
+                best_idx[pos] = best_idx[pos-1];
+                pos--;
+            }
+            best_dist[pos] = d;
+            best_idx[pos] = (unsigned int)j;
+        }
+
+        bool ok = true;
+        for (int m = 0; m < k; m++) {
+            unsigned int idx = knn_idx[i * k + m];
+            if (idx == UINT_MAX) {
+                ok = false;
+                break;
+            }
+            double d = dist2_point(p, pts[idx]);
+            double ref = best_dist[m];
+            double diff = std::abs(d - ref);
+            if (diff > tol * (1.0 + ref)) {
+                ok = false;
+                break;
+            }
+        }
+
+        if (!ok) {
+            mismatches++;
+            if (mismatches <= max_report) {
+                std::cerr << "KNN verify mismatch at point " << i
+                          << " (" << mismatches << ")" << std::endl;
+            }
+        }
+    }
+
+    if (mismatches > 0) {
+        std::cerr << "KNN verify failed: " << mismatches << " / " << n
+                  << " points mismatch." << std::endl;
+        return false;
+    }
+
+    std::cout << "KNN verify passed: all points match brute-force." << std::endl;
+    return true;
+}
+
 // -------- other --------
 void knn_free(knn_problem** knn) {
     gpuFree((*knn)->d_cell_offsets);
@@ -326,14 +434,13 @@ void knn_free(knn_problem** knn) {
 }
 
 void printInfo() {
-    // i guess just dont ask haha, just needed a testfunction to print sth once
-    std::cout << "Argh—you caught me. Watch me morph into an SPH particle, bye." << std::endl;
+    std::cout << "Done." << std::endl;
 }
 
 // -------- get stuff from gpu to cpu --------
-double3* get_points(knn_problem* knn) {
-    double3* pts = (double3*)malloc(knn->len_pts * sizeof(double3));
-    gpuMemcpy(pts, knn->d_stored_points, knn->len_pts * sizeof(double3));
+POINT_TYPE* get_points(knn_problem* knn) {
+    POINT_TYPE* pts = (POINT_TYPE*)malloc(knn->len_pts * sizeof(POINT_TYPE));
+    gpuMemcpy(pts, knn->d_stored_points, knn->len_pts * sizeof(POINT_TYPE));
     return pts;
 }
 

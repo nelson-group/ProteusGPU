@@ -5,17 +5,24 @@
 #include <cstring>
 
 // here should be some global structs and inline functions i guess
+#ifdef CPU_DEBUG
+typedef struct{
+    double x, y;
+} double2;
 
 typedef struct{
     double x, y, z;
 } double3;
+#endif
 
 #ifdef dim_2D
 // code runs in 2D mode
 #define DIMENSION 2
+typedef double2 POINT_TYPE;
 #else
 // code runs in 3D mode
 #define DIMENSION 3
+typedef double3 POINT_TYPE;
 #endif
 
 #pragma once

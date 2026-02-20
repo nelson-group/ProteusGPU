@@ -37,17 +37,26 @@ int main(int argc, char* argv[]) {
     knn_problem *knn = NULL;
 
     // prepare knn problem
-    knn = knn::init((double3*) pts.data(), icData.seedpos_dims[0]);
+    knn = knn::init((POINT_TYPE*) pts.data(), icData.seedpos_dims[0]);
 
 
     // solve knn problem
     knn::solve(knn);
 
-    double3* knn_pts = knn::get_points(knn);
+    POINT_TYPE* knn_pts = knn::get_points(knn);
     unsigned int* knn_nearest = knn::get_knearest(knn);
     unsigned int* knn_permutation = knn::get_permutation(knn);
 
     // -------- testing area --------
+
+    // nothing to see here :D
+
+    // -------- verify and file writes --------
+
+#ifdef VERIFY
+    if (!knn::verify(knn)) {return EXIT_FAILURE;}
+#endif
+
     // write KNN data to HDF5 file
 #if defined(USE_HDF5) && defined(WRITE_KNN_OUTPUT)
     std::string knn_output_file = input.getParameter("output_knn_file");

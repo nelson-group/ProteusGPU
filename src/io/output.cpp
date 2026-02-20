@@ -209,15 +209,17 @@ bool OutputHandler::writeMeshFile(const std::string& filename, const MeshCellDat
     return success;
 }
 
-bool OutputHandler::writeKNNFile(const std::string& filename, double3* knn_pts, unsigned int* knn_nearest, unsigned int* knn_permutation, int num_points, int k) {
+bool OutputHandler::writeKNNFile(const std::string& filename, POINT_TYPE* knn_pts, unsigned int* knn_nearest, unsigned int* knn_permutation, int num_points, int k) {
     std::string fullPath = outputDirectory + filename;
     
-    // flatten double3 array to flat double array
-    std::vector<double> points_flat(num_points * 3);
+    // flatten POINT_TYPE array to flat double array
+    std::vector<double> points_flat(num_points * DIMENSION);
     for (int i = 0; i < num_points; i++) {
-        points_flat[i * 3 + 0] = knn_pts[i].x;
-        points_flat[i * 3 + 1] = knn_pts[i].y;
-        points_flat[i * 3 + 2] = knn_pts[i].z;
+        points_flat[i * DIMENSION + 0] = knn_pts[i].x;
+        points_flat[i * DIMENSION + 1] = knn_pts[i].y;
+        #ifdef dim_3D
+        points_flat[i * DIMENSION + 2] = knn_pts[i].z;
+        #endif
     }
     
     // create HDF5 file
@@ -240,6 +242,11 @@ bool OutputHandler::writeKNNFile(const std::string& filename, double3* knn_pts, 
     // write header attributes
     hid_t scalar_space = H5Screate(H5S_SCALAR);
     
+    int dimension = DIMENSION;
+    hid_t attr_dimension = H5Acreate(header_group, "dimension", H5T_NATIVE_INT, scalar_space, H5P_DEFAULT, H5P_DEFAULT);
+    H5Awrite(attr_dimension, H5T_NATIVE_INT, &dimension);
+    H5Aclose(attr_dimension);
+
     hid_t attr_num_points = H5Acreate(header_group, "num_points", H5T_NATIVE_INT, scalar_space, H5P_DEFAULT, H5P_DEFAULT);
     H5Awrite(attr_num_points, H5T_NATIVE_INT, &num_points);
     H5Aclose(attr_num_points);
@@ -260,7 +267,7 @@ bool OutputHandler::writeKNNFile(const std::string& filename, double3* knn_pts, 
     }
 
     // write points (sorted)
-    hsize_t points_dims[2] = {(hsize_t)num_points, 3};
+    hsize_t points_dims[2] = {(hsize_t)num_points, DIMENSION};
     hid_t dataspace_points = H5Screate_simple(2, points_dims, NULL);
     hid_t dataset_points = H5Dcreate(knn_group, "points", H5T_NATIVE_DOUBLE, dataspace_points, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
     if (dataset_points >= 0) {

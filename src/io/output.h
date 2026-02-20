@@ -67,7 +67,7 @@ public:
     bool writeMeshFile(const std::string& filename, const MeshCellData& meshData);
     
     // write KNN data to HDF5 file
-    bool writeKNNFile(const std::string& filename, double3* knn_pts, unsigned int* knn_nearest, unsigned int* knn_permutation, int num_points, int k);
+    bool writeKNNFile(const std::string& filename, POINT_TYPE* knn_pts, unsigned int* knn_nearest, unsigned int* knn_permutation, int num_points, int k);
 #endif
 };
 
