@@ -70,9 +70,6 @@ static inline double dist2_point(const POINT_TYPE& a, const POINT_TYPE& b) {
 #endif
 }
 
-// mystic function
-void printInfo();
-
 } // namespace knn
 
 #endif // KNN_H

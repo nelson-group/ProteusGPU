@@ -29,6 +29,7 @@ typedef double3 POINT_TYPE;
 extern int _K_;
 extern double _boxsize_;
 extern int _KNN_BLOCK_SIZE_;
+extern int _VORO_BLOCK_SIZE_;
 
 // abstraction layer to later switch between CPU_DEBUG, CUDA and HIP defines
 // for now just CPU stuff

@@ -227,7 +227,9 @@ void solve(knn_problem* knn) {
     int threadsPerBlock = _KNN_BLOCK_SIZE_;
     int blocksPerGrid = (knn->len_pts + threadsPerBlock - 1) / _KNN_BLOCK_SIZE_;
 
+    #ifdef CPU_DEBUG
     cpu_knearest(blocksPerGrid, threadsPerBlock, knn->N_grid, knn->len_pts, knn->d_ptrs, knn->d_counters, knn-> d_stored_points, knn->N_cell_offsets, knn->d_cell_offsets, knn->d_cell_offset_dists, knn->d_knearests);
+    #endif
 
 }
 
@@ -431,10 +433,6 @@ void knn_free(knn_problem** knn) {
     gpuFree((*knn)->d_knearests);
     free(*knn);
     *knn = NULL;
-}
-
-void printInfo() {
-    std::cout << "Done." << std::endl;
 }
 
 // -------- get stuff from gpu to cpu --------

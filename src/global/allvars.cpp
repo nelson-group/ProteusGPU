@@ -7,3 +7,4 @@
 int _K_;
 double _boxsize_;
 int _KNN_BLOCK_SIZE_;
+int _VORO_BLOCK_SIZE_;

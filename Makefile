@@ -14,6 +14,7 @@ GLOBAL_DIR = $(SRC_DIR)/global
 IO_DIR = $(SRC_DIR)/io
 KNN_DIR = $(SRC_DIR)/knn
 BEGRUN_DIR = $(SRC_DIR)/begrun
+VORONOI_DIR = $(SRC_DIR)/voronoi
 HDF5_LIB_DIR = libs/hdf5/lib
 
 # source files
@@ -22,7 +23,8 @@ GLOBAL_SRC = $(GLOBAL_DIR)/allvars.cpp
 IO_SRC = $(IO_DIR)/input.cpp $(IO_DIR)/output.cpp
 KNN_SRC = $(KNN_DIR)/knn.cpp
 BEGRUN_SRC = $(BEGRUN_DIR)/begrun.cpp
-SOURCES = $(MAIN_SRC) $(GLOBAL_SRC) $(IO_SRC) $(KNN_SRC) $(BEGRUN_SRC)
+VORONOI_SRC = $(VORONOI_DIR)/voronoi.cpp
+SOURCES = $(MAIN_SRC) $(GLOBAL_SRC) $(IO_SRC) $(KNN_SRC) $(BEGRUN_SRC) $(VORONOI_SRC)
 
 # object files
 MAIN_OBJ = $(BUILD_DIR)/main.o
@@ -30,7 +32,8 @@ GLOBAL_OBJ = $(BUILD_DIR)/allvars.o
 IO_OBJ = $(BUILD_DIR)/input.o $(BUILD_DIR)/output.o
 KNN_OBJ = $(BUILD_DIR)/knn.o
 BEGRUN_OBJ = $(BUILD_DIR)/begrun.o
-OBJECTS = $(MAIN_OBJ) $(GLOBAL_OBJ) $(IO_OBJ) $(KNN_OBJ) $(BEGRUN_OBJ)
+VORONOI_OBJ = $(BUILD_DIR)/voronoi.o
+OBJECTS = $(MAIN_OBJ) $(GLOBAL_OBJ) $(IO_OBJ) $(KNN_OBJ) $(BEGRUN_OBJ) $(VORONOI_OBJ)
 
 # name of executable (see: https://en.wikipedia.org/wiki/Proteus :D)
 TARGET = ProteusGPU
@@ -98,6 +101,9 @@ $(BUILD_DIR)/knn.o: $(KNN_DIR)/knn.cpp $(KNN_DIR)/knn.h | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
 $(BUILD_DIR)/begrun.o: $(BEGRUN_DIR)/begrun.cpp $(BEGRUN_DIR)/begrun.h | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+
+$(BUILD_DIR)/voronoi.o: $(VORONOI_DIR)/voronoi.cpp $(VORONOI_DIR)/voronoi.h | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
 # create directories if missing
