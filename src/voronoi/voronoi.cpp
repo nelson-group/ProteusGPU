@@ -10,15 +10,15 @@
 
 namespace voronoi {
 
-    static uchar3 tr_data[_VORO_BLOCK_SIZE_ * _MAX_T_]; // memory pool for chained lists of triangles
+    static VERT_TYPE tr_data[_VORO_BLOCK_SIZE_ * _MAX_T_]; // memory pool for vertices (uchar2 in 2D, uchar3 in 3D)
     static uchar boundary_next_data[_VORO_BLOCK_SIZE_ * _MAX_P_];
-    static double4 clip_data[_VORO_BLOCK_SIZE_ * _MAX_P_]; // clipping planes
+    static double4 clip_data[_VORO_BLOCK_SIZE_ * _MAX_P_]; // clipping planes/lines
 
     static const uchar END_OF_LIST = 255;
 
     #ifdef CPU_DEBUG
     static int blockId, threadId;
-    static inline uchar3& tr(int t) { return tr_data[threadId * _MAX_T_ + t]; } // threadId.x for gpu idk perhaps do threadId struct for cpu debug some time in the future...
+    static inline VERT_TYPE& tr(int t) { return tr_data[threadId * _MAX_T_ + t]; }
     static inline uchar& boundary_next(int v) { return boundary_next_data[threadId * _MAX_P_ + v]; }
     static inline double4& clip(int v) { return clip_data[threadId * _MAX_P_ + v]; }
     inline  uchar& ith_plane(uchar t, int i) {return reinterpret_cast<uchar *>(&(tr(t)))[i];}
@@ -127,14 +127,14 @@ namespace voronoi {
                     cell.clip_by_plane(z);
 
                     // security radius break
-                    if (cell.is_security_radius_reached(point_from_ptr3(d_stored_points + 3*z))) {break;}
+                    if (cell.is_security_radius_reached(point_from_ptr(d_stored_points + DIMENSION*z))) {break;}
 
                     // gpu stat return..
                     if (gpu_stat[seed_id] != success) {break;}
 
                 }
                 // check security radius again i guess
-                if (!cell.is_security_radius_reached(point_from_ptr3(d_stored_points + 3 * d_knearests[_K_ * (seed_id+1) -1]))) {
+                if (!cell.is_security_radius_reached(point_from_ptr(d_stored_points + DIMENSION * d_knearests[_K_ * (seed_id+1) -1]))) {
                     gpu_stat[seed_id] = security_radius_not_reached;
                 }
 
@@ -155,10 +155,8 @@ namespace voronoi {
         double eps  = .0000000001;
         double xmin = -eps;
         double ymin = -eps;
-        double zmin = -eps;
         double xmax = _boxsize_ + eps;
         double ymax = _boxsize_ + eps;
-        double zmax = _boxsize_ + eps;
     
         // store pointer to pts
         pts = p_pts;
@@ -172,11 +170,34 @@ namespace voronoi {
 
         // store seed point info
         voro_id = p_seed;
-        voro_seed = make_double4(pts[3 * voro_id], pts[3 * voro_id + 1], pts[3 * voro_id + 2], 1);
 
         // status set to success for now
         status = p_status;
         *status = success;
+
+        voro_seed = point_from_ptr(pts + DIMENSION * voro_id);
+
+    #ifdef dim_2D
+
+        // create 4 bounding lines for the initial bounding box
+        clip(0) = make_double4( 1.0,  0.0,  0.0, xmin);  // x >= xmin (left)
+        clip(1) = make_double4(-1.0,  0.0,  0.0,  xmax); // x <= xmax (right)
+        clip(2) = make_double4( 0.0,  1.0,  0.0, ymin);  // y >= ymin (bottom)
+        clip(3) = make_double4( 0.0, -1.0,  0.0,  ymax); // y <= ymax (top)
+    
+        nb_v = 4;  // 4 bounding lines
+
+        // 4 vertices (corners of bounding box)
+        // ordering ensures result.w < 0 (consistent with 3D sign convention)
+        tr(0) = make_uchar2(2, 0);  // (xmin, ymin) bottom-left
+        tr(1) = make_uchar2(1, 2);  // (xmax, ymin) bottom-right
+        tr(2) = make_uchar2(3, 1);  // (xmax, ymax) top-right
+        tr(3) = make_uchar2(0, 3);  // (xmin, ymax) top-left
+    
+        nb_t = 4;  // 4 vertices
+    #else
+        double zmin = -eps;
+        double zmax = _boxsize_ + eps;
 
         // create 6 bounding planes for the initial bounding box
         // X-direction planes:
@@ -203,11 +224,12 @@ namespace voronoi {
         tr(7) = make_uchar3(4, 3, 1);  // Triangle 7: planes {4,3,1}
     
         nb_t = 8;  // We now have 8 triangles
+    #endif
     }
 
     void ConvexCell::clip_by_plane(int vid) {
         
-        int cur_v = new_point(vid); // add new plane equation
+        int cur_v = new_point(vid); // add new plane/line equation
 
         if (*status == vertex_overflow) {return;}
 
@@ -215,8 +237,12 @@ namespace voronoi {
         nb_r = 0;
 
         int i = 0;
-        while (i < nb_t) { // for all verticies of the cell
+        while (i < nb_t) { // for all vertices of the cell
+        #ifdef dim_2D
+            if(edge_is_in_conflict(tr(i), eqn)) {
+        #else
             if(triangle_is_in_conflict(tr(i), eqn)) {
+        #endif
                 nb_t--;
                 swap(tr(i), tr(nb_t));
                 nb_r++;
@@ -238,13 +264,23 @@ namespace voronoi {
         if (*status != success) {return;}
         if (first_boundary == END_OF_LIST) {return;}
 
-        // triangulate cavity
+    #ifdef dim_2D
+        // triangulate cavity: in 2D, add 2 new vertices (new line intersects 2 boundary lines)
+        uchar cir = first_boundary;
+        do {
+            new_edge(cur_v, cir);
+            if (*status != success) return;
+            cir = boundary_next(cir);
+        } while (cir != first_boundary);
+    #else
+        // triangulate cavity: in 3D, fan-triangulate using boundary cycle
         uchar cir = first_boundary;
         do {
             new_triangle(cur_v, cir, boundary_next(cir));
             if (*status != success) return;
             cir = boundary_next(cir);
         } while (cir != first_boundary);
+    #endif
     }
 
     int ConvexCell::new_point(int vid) {
@@ -253,10 +289,10 @@ namespace voronoi {
             return -1; 
         }
 
-        double4 B = point_from_ptr3(pts + 3 * vid);
+        double4 B = point_from_ptr(pts + DIMENSION * vid);
         double4 dir = minus4(voro_seed, B);
         double4 ave2 = plus4(voro_seed, B);
-        double dot = dot3(ave2,dir); // TODO safe to put dot4 here, dir.w = 0
+        double dot = dot3(ave2, dir); // works for 2D since z=0
         clip(nb_v) = make_double4(dir.x, dir.y, dir.z, -dot / 2.0);
         plane_vid[nb_v] = vid;
         nb_v++;
@@ -264,6 +300,33 @@ namespace voronoi {
     }
 
 
+#ifdef dim_2D
+    bool ConvexCell::edge_is_in_conflict(uchar2 e, double4 eqn) const {
+    double4 pi1 = clip(e.x);
+    double4 pi2 = clip(e.y);
+
+    double det = det3x3(
+	pi1.x, pi2.x, eqn.x,
+	pi1.y, pi2.y, eqn.y,
+	pi1.w, pi2.w, eqn.w
+    );
+
+    double maxx = std::max({std::fabs(pi1.x), std::fabs(pi2.x), std::fabs(eqn.x)});
+    double maxy = std::max({std::fabs(pi1.y), std::fabs(pi2.y), std::fabs(eqn.y)});
+    double maxw = std::max({std::fabs(pi1.w), std::fabs(pi2.w), std::fabs(eqn.w)});
+
+    // bound for 3x3 determinant with entries from rows (x, y, w)
+    double max_max = std::max({maxx, maxy, maxw});
+    double eps = 1e-14 * maxx * maxy * maxw;
+    eps *= max_max;
+
+    if(std::fabs(det) < eps) {
+	*status = needs_exact_predicates;
+    }
+
+    return (det > 0.0);
+    }
+#else
     bool ConvexCell::triangle_is_in_conflict(uchar3 t, double4 eqn) const {
     double4 pi1 = clip(t.x);
     double4 pi2 = clip(t.y);
@@ -296,10 +359,53 @@ namespace voronoi {
 
     return (det > 0.0);
     }
+#endif
 
 
     void ConvexCell::compute_boundary() {
 
+    #ifdef dim_2D
+        // 2D boundary computation: find exactly 2 boundary lines
+        // A boundary line appears in exactly one removed vertex and one surviving vertex
+        for (int i = 0; i < _MAX_P_; i++) {
+            boundary_next(i) = END_OF_LIST;
+        }
+        first_boundary = END_OF_LIST;
+
+        // count how many times each line appears in removed vertices
+        int line_count[_MAX_P_];
+        for (int i = 0; i < _MAX_P_; i++) { line_count[i] = 0; }
+
+        for (int r = 0; r < nb_r; r++) {
+            uchar2 e = tr(nb_t + r);
+            line_count[e.x]++;
+            line_count[e.y]++;
+        }
+
+        // boundary lines are those appearing exactly once in removed vertices
+        uchar boundary_lines[2];
+        int nb_boundary = 0;
+
+        for (int p = 0; p < nb_v; p++) {
+            if (line_count[p] == 1) {
+                if (nb_boundary < 2) {
+                    boundary_lines[nb_boundary++] = (uchar)p;
+                }
+            }
+        }
+
+        if (nb_boundary != 2) {
+            *status = inconsistent_boundary;
+            return;
+        }
+
+        // build circular list: B0 → B1 → B0
+        first_boundary = boundary_lines[0];
+        boundary_next(boundary_lines[0]) = boundary_lines[1];
+        boundary_next(boundary_lines[1]) = boundary_lines[0];
+
+    #else
+        // 3D boundary computation
         // clean circular list of the boundary
         for (int i = 0; i < _MAX_P_; i++) {
             boundary_next(i) = END_OF_LIST;
@@ -374,9 +480,26 @@ namespace voronoi {
             t = nb_t;
             nb_r--;
         }
+    #endif
     }
 
 
+#ifdef dim_2D
+    void ConvexCell::new_edge(uchar i, uchar j) {
+        if (nb_t+1 >= _MAX_T_) { 
+            *status = triangle_overflow; 
+            return; 
+        }
+        // ensure consistent orientation: result.w < 0 (same convention as 3D)
+        double rw = det2x2(clip(i).x, clip(i).y, clip(j).x, clip(j).y);
+        if (rw > 0) {
+            tr(nb_t) = make_uchar2(j, i);
+        } else {
+            tr(nb_t) = make_uchar2(i, j);
+        }
+        nb_t++;
+    }
+#else
     void ConvexCell::new_triangle(uchar i, uchar j, uchar k) {
         if (nb_t+1 >= _MAX_T_) { 
             *status = triangle_overflow; 
@@ -385,25 +508,45 @@ namespace voronoi {
         tr(nb_t) = make_uchar3(i, j, k);
         nb_t++;
     }
+#endif
 
     bool ConvexCell::is_security_radius_reached(double4 last_neig) {
         // finds furthest voro vertex distance2
         double v_dist = 0;
     
         for (int i = 0; i < nb_t; i++) {
+        #ifdef dim_2D
+            double4 pc = compute_edge_point(tr(i));
+        #else
             double4 pc = compute_triangle_point(tr(i));
+        #endif
             double4 diff = minus4(pc, voro_seed);
-            double d2 = dot3(diff, diff);
+            double d2 = dot3(diff, diff); // works for 2D since z=0
             v_dist = std::max(d2, v_dist);
         }
     
         //compare to new neighbors distance2
-        double4 diff = minus4(last_neig, voro_seed); // TODO it really should take index of the neighbor instead of the float4, then would be safe to put dot4
+        double4 diff = minus4(last_neig, voro_seed);
         double d2 = dot3(diff, diff);
         return (d2 > 4*v_dist);
     }
 
 
+#ifdef dim_2D
+    double4 ConvexCell::compute_edge_point(uchar2 e, bool persp_divide) const {
+        double4 pi1 = clip(e.x);
+        double4 pi2 = clip(e.y);
+        double4 result;
+        result.x = -det2x2(pi1.w, pi1.y, pi2.w, pi2.y);
+        result.y = -det2x2(pi1.x, pi1.w, pi2.x, pi2.w);
+        result.z = 0;
+        result.w =  det2x2(pi1.x, pi1.y, pi2.x, pi2.y);
+        if (persp_divide) {
+            return make_double4(result.x / result.w, result.y / result.w, 0, 1);
+        }
+        return result;
+    }
+#else
     double4 ConvexCell::compute_triangle_point(uchar3 t, bool persp_divide) const {
         double4 pi1 = clip(t.x);
         double4 pi2 = clip(t.y);
@@ -418,15 +561,107 @@ namespace voronoi {
         }
         return result;
     }
+#endif
 
 
 
 // some very basic helpers
-double4 point_from_ptr3(double* f) {
+double4 point_from_ptr(double* f) {
+#ifdef dim_2D
+    return make_double4(f[0], f[1], 0, 1);
+#else
     return make_double4(f[0], f[1], f[2], 1);
+#endif
 }
 
 #ifdef USE_HDF5
+
+#ifdef dim_2D
+    void extract_cell_mesh_data(ConvexCell& cell, MeshCellData& meshData) {
+        // store cell id and seed position
+        meshData.cell_ids.push_back(cell.voro_id);
+        meshData.seeds.push_back(cell.voro_seed.x);
+        meshData.seeds.push_back(cell.voro_seed.y);
+
+        // compute all vertex positions (each edge = 1 vertex of the polygon)
+        std::vector<double4> vertices(cell.nb_t);
+        for (int i = 0; i < cell.nb_t; i++) {
+            vertices[i] = cell.compute_edge_point(tr(i), true);
+        }
+
+        // order vertices by angle around centroid for area computation (shoelace)
+        double cx = 0, cy = 0;
+        for (int i = 0; i < cell.nb_t; i++) {
+            cx += vertices[i].x;
+            cy += vertices[i].y;
+        }
+        cx /= cell.nb_t;
+        cy /= cell.nb_t;
+
+        std::vector<int> order(cell.nb_t);
+        for (int i = 0; i < cell.nb_t; i++) { order[i] = i; }
+        std::sort(order.begin(), order.end(), [&](int a, int b) {
+            return std::atan2(vertices[a].y - cy, vertices[a].x - cx) <
+                   std::atan2(vertices[b].y - cy, vertices[b].x - cx);
+        });
+
+        // compute cell area using shoelace formula
+        double cell_area = 0;
+        for (int i = 0; i < cell.nb_t; i++) {
+            int j = (i + 1) % cell.nb_t;
+            cell_area += vertices[order[i]].x * vertices[order[j]].y;
+            cell_area -= vertices[order[j]].x * vertices[order[i]].y;
+        }
+        cell_area = std::fabs(cell_area) / 2.0;
+        meshData.volumes.push_back(cell_area);  // "volume" = area in 2D
+
+        // extract faces (edges of the polygon)
+        int face_count = 0;
+
+        for (int p = 0; p < cell.nb_v; p++) {
+            // find vertices (edge-point pairs) that use line p
+            std::vector<int> edge_verts;
+            for (int i = 0; i < cell.nb_t; i++) {
+                if (tr(i).x == p || tr(i).y == p) {
+                    edge_verts.push_back(i);
+                }
+            }
+            if (edge_verts.size() != 2) continue; // each line should have exactly 2 vertices
+
+            double4 v0 = vertices[edge_verts[0]];
+            double4 v1 = vertices[edge_verts[1]];
+
+            // edge length = "face area" in 2D
+            double dx = v1.x - v0.x;
+            double dy = v1.y - v0.y;
+            double edge_len = std::sqrt(dx * dx + dy * dy);
+
+            // normal: from clip plane equation (a, b), normalized
+            double4 plane_eq = clip(p);
+            double nlen = std::sqrt(plane_eq.x * plane_eq.x + plane_eq.y * plane_eq.y);
+            double nx = plane_eq.x / nlen;
+            double ny = plane_eq.y / nlen;
+
+            meshData.faces.neighbor_cell.push_back(cell.plane_vid[p]);
+            meshData.faces.normal.push_back(nx);
+            meshData.faces.normal.push_back(ny);
+            meshData.faces.area.push_back(edge_len);
+
+            // edge coords: 2 endpoints
+            meshData.faces.edge_coords_offsets.push_back(2);
+            meshData.faces.edge_coords.push_back(v0.x);
+            meshData.faces.edge_coords.push_back(v0.y);
+            meshData.faces.edge_coords.push_back(v1.x);
+            meshData.faces.edge_coords.push_back(v1.y);
+
+            face_count++;
+        }
+
+        // store per-cell face count
+        meshData.face_counts.push_back(face_count);
+    }
+
+#else
     void extract_cell_mesh_data(ConvexCell& cell, MeshCellData& meshData) {
         // store cell id and seed position
         meshData.cell_ids.push_back(cell.voro_id);
@@ -580,7 +815,8 @@ double4 point_from_ptr3(double* f) {
         // store per-cell face count
         meshData.face_counts.push_back(face_count);
     }
-#endif
+#endif // dim_2D
+#endif // USE_HDF5
 double4 minus4(double4 A, double4 B) {
     return make_double4(A.x-B.x, A.y-B.y, A.z-B.z, A.w-B.w);
 }

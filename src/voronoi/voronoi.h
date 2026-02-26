@@ -54,17 +54,24 @@ namespace voronoi {
         uchar first_boundary;
         Status* status;
         uchar nb_v;
-        uchar nb_t;
+        uchar nb_t; // number of cell vertices (3-plane intersections in 3D, 2-line intersections in 2D)
         uchar nb_r;
         int plane_vid[_MAX_P_]; // maps plane index to global point id (-1 for boundary planes)
 
         void clip_by_plane(int vid);
         int new_point(int vid);
-        bool triangle_is_in_conflict(uchar3 t, double4 eqn) const;
         void compute_boundary();
-        void new_triangle(uchar i, uchar j, uchar k);
         bool is_security_radius_reached(double4 last_neig);
+
+        #ifdef dim_2D
+        bool edge_is_in_conflict(uchar2 e, double4 eqn) const;
+        void new_edge(uchar i, uchar j);
+        double4 compute_edge_point(uchar2 e, bool persp_divide=true) const;
+        #else
+        bool triangle_is_in_conflict(uchar3 t, double4 eqn) const;
+        void new_triangle(uchar i, uchar j, uchar k);
         double4 compute_triangle_point(uchar3 t, bool persp_divide=true) const;
+        #endif
     };
 
     
@@ -80,7 +87,7 @@ namespace voronoi {
 
 
     // many inline helpers....
-    double4 point_from_ptr3(double* f);
+    double4 point_from_ptr(double* f);
     double4 minus4(double4 A, double4 B);
     double4 plus4(double4 A, double4 B);
     double dot4(double4 A, double4 B);

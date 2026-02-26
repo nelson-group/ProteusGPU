@@ -30,16 +30,26 @@ struct uchar3 {
 inline uchar3 make_uchar3(uchar x, uchar y, uchar z) {
     return {x, y, z};
 }
+
+struct uchar2 {
+    uchar x, y;
+};
+
+inline uchar2 make_uchar2(uchar x, uchar y) {
+    return {x, y};
+}
 #endif
 
 #ifdef dim_2D
 // code runs in 2D mode
 #define DIMENSION 2
 typedef double2 POINT_TYPE;
+typedef uchar2 VERT_TYPE;
 #else
 // code runs in 3D mode
 #define DIMENSION 3
 typedef double3 POINT_TYPE;
+typedef uchar3 VERT_TYPE;
 #endif
 
 #pragma once
